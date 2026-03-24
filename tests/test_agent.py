@@ -74,9 +74,7 @@ class TestSummarizePaper:
 
         mock_llm = MagicMock()
         mock_llm.invoke.return_value = "This paper presents a method for X."
-        result = summarize_paper(
-            mock_llm, "Test Paper", "Some text about neural networks."
-        )
+        result = summarize_paper(mock_llm, "Test Paper", "Some text about neural networks.")
         assert isinstance(result, str)
         assert len(result) > 0
 
@@ -152,9 +150,7 @@ class TestAskQuestion:
         store = FAISS.from_documents(docs, embeddings)
 
         mock_llm = MagicMock()
-        mock_llm.invoke.return_value = (
-            "Attention helps models focus on important tokens."
-        )
+        mock_llm.invoke.return_value = "Attention helps models focus on important tokens."
 
         result = ask_question(mock_llm, store, "What do attention mechanisms do?")
         assert "answer" in result

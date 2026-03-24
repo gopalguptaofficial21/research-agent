@@ -72,9 +72,7 @@ def get_llm():
         )
 
     else:
-        raise ValueError(
-            f"Unknown LLM_BACKEND: '{backend}'. Use 'ollama' or 'huggingface'."
-        )
+        raise ValueError(f"Unknown LLM_BACKEND: '{backend}'. Use 'ollama' or 'huggingface'.")
 
 
 def get_embeddings():

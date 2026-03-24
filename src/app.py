@@ -187,9 +187,7 @@ if submitted and query:
         status_text.error(result["error"])
     else:
         st.session_state.pipeline_result = result
-        status_text.success(
-            f"✅ Loaded {len(result['papers'])} papers. Ask questions below!"
-        )
+        status_text.success(f"✅ Loaded {len(result['papers'])} papers. Ask questions below!")
 
 elif submitted and not query:
     st.warning("Please enter a research topic.")
