@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 # ── LLM backend selector ──────────────────────────────────────────────────────
 
+
 def get_llm():
     """
     Returns the best available free LLM:
@@ -43,6 +44,7 @@ def get_llm():
 
     if backend == "ollama":
         from langchain_community.llms import Ollama
+
         model = os.getenv("OLLAMA_MODEL", "llama3")
         logger.info("Using Ollama backend with model: %s", model)
         return Ollama(
@@ -53,6 +55,7 @@ def get_llm():
 
     elif backend == "huggingface":
         from langchain_community.llms import HuggingFaceEndpoint
+
         token = os.getenv("HF_API_TOKEN")
         if not token:
             raise EnvironmentError(
@@ -69,7 +72,9 @@ def get_llm():
         )
 
     else:
-        raise ValueError(f"Unknown LLM_BACKEND: '{backend}'. Use 'ollama' or 'huggingface'.")
+        raise ValueError(
+            f"Unknown LLM_BACKEND: '{backend}'. Use 'ollama' or 'huggingface'."
+        )
 
 
 def get_embeddings():
@@ -91,6 +96,7 @@ def get_embeddings():
 
 # ── ArXiv Search ──────────────────────────────────────────────────────────────
 
+
 def search_arxiv(query: str, max_results: int = 5) -> list[dict]:
     """Search ArXiv and return structured paper metadata."""
     client = arxiv.Client()
@@ -101,19 +107,22 @@ def search_arxiv(query: str, max_results: int = 5) -> list[dict]:
     )
     papers = []
     for result in client.results(search):
-        papers.append({
-            "title":     result.title,
-            "authors":   [a.name for a in result.authors[:3]],
-            "abstract":  result.summary,
-            "pdf_url":   result.pdf_url,
-            "arxiv_id":  result.entry_id.split("/")[-1],
-            "published": str(result.published.date()),
-            "url":       f"https://arxiv.org/abs/{result.entry_id.split('/')[-1]}",
-        })
+        papers.append(
+            {
+                "title": result.title,
+                "authors": [a.name for a in result.authors[:3]],
+                "abstract": result.summary,
+                "pdf_url": result.pdf_url,
+                "arxiv_id": result.entry_id.split("/")[-1],
+                "published": str(result.published.date()),
+                "url": f"https://arxiv.org/abs/{result.entry_id.split('/')[-1]}",
+            }
+        )
     return papers
 
 
 # ── PDF Extraction ────────────────────────────────────────────────────────────
+
 
 def extract_pdf_text(pdf_url: str, max_pages: int = 8) -> str:
     """Download a PDF and extract plain text from the first N pages."""
@@ -151,6 +160,7 @@ def summarize_paper(llm, title: str, text: str) -> str:
 
 # ── Vector Store ──────────────────────────────────────────────────────────────
 
+
 def build_vector_store(papers: list[dict], embeddings) -> FAISS:
     """Chunk paper texts and build a FAISS vector index."""
     splitter = RecursiveCharacterTextSplitter(
@@ -161,15 +171,17 @@ def build_vector_store(papers: list[dict], embeddings) -> FAISS:
     for paper in papers:
         chunks = splitter.split_text(paper["full_text"])
         for chunk in chunks:
-            docs.append(Document(
-                page_content=chunk,
-                metadata={
-                    "title":    paper["title"],
-                    "arxiv_id": paper["arxiv_id"],
-                    "authors":  ", ".join(paper["authors"]),
-                    "url":      paper["url"],
-                },
-            ))
+            docs.append(
+                Document(
+                    page_content=chunk,
+                    metadata={
+                        "title": paper["title"],
+                        "arxiv_id": paper["arxiv_id"],
+                        "authors": ", ".join(paper["authors"]),
+                        "url": paper["url"],
+                    },
+                )
+            )
     return FAISS.from_documents(docs, embeddings)
 
 
@@ -204,17 +216,20 @@ def ask_question(llm, vector_store: FAISS, question: str) -> dict:
         aid = doc.metadata.get("arxiv_id", "")
         if aid not in seen:
             seen.add(aid)
-            sources.append({
-                "title":    doc.metadata.get("title", "Unknown"),
-                "arxiv_id": aid,
-                "authors":  doc.metadata.get("authors", ""),
-                "url":      doc.metadata.get("url", ""),
-            })
+            sources.append(
+                {
+                    "title": doc.metadata.get("title", "Unknown"),
+                    "arxiv_id": aid,
+                    "authors": doc.metadata.get("authors", ""),
+                    "url": doc.metadata.get("url", ""),
+                }
+            )
 
     return {"answer": result["result"], "sources": sources}
 
 
 # ── Full Pipeline ─────────────────────────────────────────────────────────────
+
 
 def run_research_pipeline(
     query: str,
@@ -236,7 +251,7 @@ def run_research_pipeline(
             status_callback(msg)
 
     _status("🔍 Initialising LLM and embeddings...")
-    llm        = get_llm()
+    llm = get_llm()
     embeddings = get_embeddings()
 
     _status(f"📡 Searching ArXiv for: {query}")

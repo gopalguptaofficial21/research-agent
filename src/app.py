@@ -19,7 +19,8 @@ st.set_page_config(
 
 # ── Custom CSS ────────────────────────────────────────────────────────────────
 
-st.markdown("""
+st.markdown(
+    """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Inter:wght@400;500;600&display=swap');
 
@@ -72,7 +73,9 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
     font-family: 'IBM Plex Mono', monospace;
 }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -83,7 +86,7 @@ with st.sidebar:
     backend = st.selectbox(
         "LLM Backend",
         ["ollama", "huggingface"],
-        help="Ollama = local model, no API key. HuggingFace = free cloud API."
+        help="Ollama = local model, no API key. HuggingFace = free cloud API.",
     )
 
     if backend == "ollama":
@@ -93,8 +96,8 @@ with st.sidebar:
         st.warning("Needs a free HuggingFace token in your `.env` file.")
         model = "mistralai/Mistral-7B-Instruct-v0.3"
 
-    num_papers  = st.slider("Papers to fetch", 2, 8, 4)
-    max_pages   = st.slider("PDF pages to read", 4, 15, 8)
+    num_papers = st.slider("Papers to fetch", 2, 8, 4)
+    max_pages = st.slider("PDF pages to read", 4, 15, 8)
 
     st.markdown("---")
     st.markdown("### 🛠️ Stack")
@@ -154,10 +157,10 @@ with st.form("search_form"):
 
 if submitted and query:
     st.session_state.pipeline_result = None
-    st.session_state.chat_history    = []
+    st.session_state.chat_history = []
 
     progress_bar = st.progress(0)
-    status_text  = st.empty()
+    status_text = st.empty()
     step_counter = [0]
 
     def on_status(msg: str):
@@ -167,6 +170,7 @@ if submitted and query:
         status_text.markdown(f"**{msg}**")
 
     import os
+
     os.environ["LLM_BACKEND"] = backend
     if backend == "ollama":
         os.environ["OLLAMA_MODEL"] = model
@@ -183,7 +187,9 @@ if submitted and query:
         status_text.error(result["error"])
     else:
         st.session_state.pipeline_result = result
-        status_text.success(f"✅ Loaded {len(result['papers'])} papers. Ask questions below!")
+        status_text.success(
+            f"✅ Loaded {len(result['papers'])} papers. Ask questions below!"
+        )
 
 elif submitted and not query:
     st.warning("Please enter a research topic.")
@@ -192,8 +198,8 @@ elif submitted and not query:
 # ── Results ───────────────────────────────────────────────────────────────────
 
 if st.session_state.pipeline_result:
-    result  = st.session_state.pipeline_result
-    papers  = result["papers"]
+    result = st.session_state.pipeline_result
+    papers = result["papers"]
 
     st.markdown(f"### 📚 {len(papers)} Papers Analysed")
 
@@ -231,7 +237,7 @@ if st.session_state.pipeline_result:
                 st.session_state["prefill_q"] = s
 
         default_q = st.session_state.pop("prefill_q", "")
-        user_q    = st.text_input(
+        user_q = st.text_input(
             "Your question",
             value=default_q,
             placeholder="Ask anything about the loaded papers…",
@@ -240,11 +246,13 @@ if st.session_state.pipeline_result:
         if st.button("💬 Ask", type="primary") and user_q:
             with st.spinner("Searching papers and generating answer…"):
                 qa_result = ask_question(result["llm"], result["vector_store"], user_q)
-            st.session_state.chat_history.append({
-                "question": user_q,
-                "answer":   qa_result["answer"],
-                "sources":  qa_result["sources"],
-            })
+            st.session_state.chat_history.append(
+                {
+                    "question": user_q,
+                    "answer": qa_result["answer"],
+                    "sources": qa_result["sources"],
+                }
+            )
 
         if st.session_state.chat_history:
             st.markdown("---")
@@ -255,11 +263,13 @@ if st.session_state.pipeline_result:
                     unsafe_allow_html=True,
                 )
                 chips = "".join(
-                    f'<a class="source-chip" href="{s["url"]}" target="_blank">'
-                    f'📄 {s["title"][:45]}…</a>'
-                    if len(s["title"]) > 45
-                    else f'<a class="source-chip" href="{s["url"]}" target="_blank">'
-                         f'📄 {s["title"]}</a>'
+                    (
+                        f'<a class="source-chip" href="{s["url"]}" target="_blank">'
+                        f'📄 {s["title"][:45]}…</a>'
+                        if len(s["title"]) > 45
+                        else f'<a class="source-chip" href="{s["url"]}" target="_blank">'
+                        f'📄 {s["title"]}</a>'
+                    )
                     for s in item["sources"]
                 )
                 if chips:
@@ -267,10 +277,13 @@ if st.session_state.pipeline_result:
                 st.markdown("")
 
 else:
-    st.markdown("""
+    st.markdown(
+        """
     <div style='text-align:center;padding:3rem 1rem;color:#64748b;'>
       <div style='font-size:3.5rem'>🔬</div>
       <p style='font-size:1.15rem;font-weight:600;margin-top:.5rem;'>Enter a research topic above to get started</p>
       <p style='font-size:.9rem'>The agent will autonomously search, read, and learn from ArXiv papers.</p>
     </div>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
