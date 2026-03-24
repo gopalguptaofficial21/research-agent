@@ -1,0 +1,70 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Research Agent — Docker Compose
+# Starts the Streamlit app + Ollama LLM server side-by-side.
+#
+# Quick start:
+#   docker compose up --build
+#   Then open: http://localhost:8501
+#
+# Pull an LLM model first:
+#   docker compose exec ollama ollama pull llama3
+# ─────────────────────────────────────────────────────────────────────────────
+
+version: "3.9"
+
+services:
+
+  # ── Streamlit App ─────────────────────────────────────────────────────────
+  app:
+    build: .
+    container_name: research_agent_app
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      - LLM_BACKEND=ollama
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_MODEL=llama3
+    volumes:
+      - hf_cache:/app/.cache/huggingface   # persist embedding model
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - agent_net
+
+  # ── Ollama (local LLM server) ─────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: research_agent_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama          # persist downloaded models
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - agent_net
+    # Uncomment if you have an NVIDIA GPU:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  ollama_models:
+  hf_cache:
+
+networks:
+  agent_net:
+    driver: bridge
