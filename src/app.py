@@ -5,7 +5,10 @@ Run:  streamlit run src/app.py
 """
 
 from __future__ import annotations
+import os
 import streamlit as st
+import urllib.request
+
 from agent import run_research_pipeline, ask_question
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -83,21 +86,58 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 with st.sidebar:
     st.markdown("## ⚙️ Settings")
 
+    def _ollama_reachable() -> bool:
+        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+        try:
+            urllib.request.urlopen(f"{base_url}/api/tags", timeout=0.8)
+            return True
+        except Exception:
+            return False
+
+    env_backend = os.getenv("LLM_BACKEND", "").strip().lower()
+    default_backend = env_backend if env_backend in {"ollama", "huggingface"} else ("ollama" if _ollama_reachable() else "huggingface")
+
     backend = st.selectbox(
         "LLM Backend",
         ["ollama", "huggingface"],
+        index=0 if default_backend == "ollama" else 1,
         help="Ollama = local model, no API key. HuggingFace = free cloud API.",
     )
 
     if backend == "ollama":
-        model = st.selectbox("Ollama Model", ["llama3", "mistral", "phi3", "gemma"])
+        # Default to the first locally available Ollama model (when possible),
+        # otherwise fall back to the first option in the list.
+        import subprocess
+
+        available_models = []
+        try:
+            out = subprocess.check_output(["ollama", "list"], text=True, stderr=subprocess.STDOUT)
+            for line in out.splitlines():
+                # Expected format: "NAME  ID  SIZE  MODIFIED"
+                parts = line.split()
+                if parts:
+                    available_models.append(parts[0])
+        except Exception:
+            available_models = []
+
+        # Normalize "phi3:latest" -> "phi3" for display/selection.
+        normalized = {m.split(":")[0] for m in available_models}
+        options = ["llama3", "mistral", "phi3", "gemma"]
+        env_model = os.getenv("OLLAMA_MODEL", "").strip().split(":")[0]
+        # Prefer env_model when it is one of our known options; if we can't read
+        # `ollama list` (hosted env / CLI missing), this prevents defaulting to
+        # llama3 by accident.
+        default_model = env_model if env_model in options else next((m for m in options if m in normalized), options[0])
+
+        model = st.selectbox("Ollama Model", options, index=options.index(default_model))
         st.info("Make sure `ollama serve` is running locally.")
     else:
         st.warning("Needs a free HuggingFace token in your `.env` file.")
         model = "mistralai/Mistral-7B-Instruct-v0.3"
 
-    num_papers = st.slider("Papers to fetch", 2, 8, 4)
-    max_pages = st.slider("PDF pages to read", 4, 15, 8)
+    # Defaults kept small so first-time runs complete quickly.
+    num_papers = st.slider("Papers to fetch", 2, 8, 2)
+    max_pages = st.slider("PDF pages to read", 4, 15, 4)
 
     st.markdown("---")
     st.markdown("### 🛠️ Stack")
@@ -137,6 +177,7 @@ for key, default in [
     ("chat_history", []),
     ("backend", backend),
     ("model", model),
+    ("user_q", ""),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -164,10 +205,16 @@ if submitted and query:
     step_counter = [0]
 
     def on_status(msg: str):
-        step_counter[0] = min(step_counter[0] + 1, len(STATUS_STEPS) - 1)
-        pct = int((step_counter[0] / (len(STATUS_STEPS) - 1)) * 100)
-        progress_bar.progress(pct)
-        status_text.markdown(f"**{msg}**")
+        # If the user closes/refreshes the browser while the pipeline is running,
+        # Streamlit's websocket can be closed; UI updates would raise.
+        # We treat those as non-fatal because the backend work may still complete.
+        try:
+            step_counter[0] = min(step_counter[0] + 1, len(STATUS_STEPS) - 1)
+            pct = int((step_counter[0] / (len(STATUS_STEPS) - 1)) * 100)
+            progress_bar.progress(pct)
+            status_text.markdown(f"**{msg}**")
+        except Exception:
+            return
 
     import os
 
@@ -184,10 +231,16 @@ if submitted and query:
     progress_bar.progress(100)
 
     if "error" in result:
-        status_text.error(result["error"])
+        try:
+            status_text.error(result["error"])
+        except Exception:
+            pass
     else:
         st.session_state.pipeline_result = result
-        status_text.success(f"✅ Loaded {len(result['papers'])} papers. Ask questions below!")
+        try:
+            status_text.success(f"✅ Loaded {len(result['papers'])} papers. Ask questions below!")
+        except Exception:
+            pass
 
 elif submitted and not query:
     st.warning("Please enter a research topic.")
@@ -232,13 +285,14 @@ if st.session_state.pipeline_result:
         cols = st.columns(3)
         for i, s in enumerate(suggestions):
             if cols[i % 3].button(s, key=f"sug_{i}"):
-                st.session_state["prefill_q"] = s
+                # Persist the selected question for the next rerun (Ask button reruns too).
+                st.session_state["user_q"] = s
 
-        default_q = st.session_state.pop("prefill_q", "")
         user_q = st.text_input(
             "Your question",
-            value=default_q,
+            value=st.session_state["user_q"],
             placeholder="Ask anything about the loaded papers…",
+            key="user_q_input",
         )
 
         if st.button("💬 Ask", type="primary") and user_q:

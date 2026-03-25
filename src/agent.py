@@ -12,19 +12,23 @@ Research Agent — Core Logic
 from __future__ import annotations
 
 import os
+import json
+import subprocess
 import tempfile
 import urllib.request
+import urllib.error
 import logging
+from functools import lru_cache
 
 import arxiv
 import fitz  # PyMuPDF
 from dotenv import load_dotenv
 
-from langchain.schema import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.chains import RetrievalQA
+from langchain.chains.retrieval_qa.base import RetrievalQA
 from langchain_core.prompts import PromptTemplate
 
 load_dotenv()
@@ -42,25 +46,73 @@ def get_llm():
     """
     backend = os.getenv("LLM_BACKEND", "ollama").lower()
 
+    def _ollama_tags(base_url: str) -> dict:
+        url = f"{base_url.rstrip('/')}/api/tags"
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+        return json.loads(raw)
+
+    def _model_present(tags_payload: dict, wanted_model: str) -> bool:
+        models = tags_payload.get("models", []) or []
+        wanted_root = wanted_model.split(":")[0]
+        for m in models:
+            name = m.get("name", "")
+            if name == wanted_model:
+                return True
+            if name.split(":")[0] == wanted_root:
+                return True
+        return False
+
+    def _try_pull_ollama_model(model: str) -> None:
+        # Pull only works where `ollama` CLI exists and the Ollama server is reachable.
+        # On hosted platforms, this will fail and we will fallback to HF.
+        subprocess.run(["ollama", "pull", model], check=False, capture_output=True, text=True)
+
     if backend == "ollama":
         from langchain_community.llms import Ollama
 
         model = os.getenv("OLLAMA_MODEL", "llama3")
-        logger.info("Using Ollama backend with model: %s", model)
-        return Ollama(
-            model=model,
-            base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
-            temperature=0.2,
-        )
+        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        try:
+            tags = _ollama_tags(base_url)
+            if not _model_present(tags, model):
+                logger.warning("Ollama model '%s' not found locally. Trying to pull...", model)
+                _try_pull_ollama_model(model)
+                tags = _ollama_tags(base_url)
+                if not _model_present(tags, model):
+                    raise RuntimeError(
+                        f"Ollama model '{model}' not found even after `ollama pull {model}`. "
+                        "Install it locally or switch OLLAMA_MODEL."
+                    )
 
-    elif backend == "huggingface":
+            logger.info("Using Ollama backend with model: %s", model)
+            return Ollama(
+                model=model,
+                base_url=base_url,
+                temperature=0.2,
+            )
+        except Exception as exc:
+            hf_token = os.getenv("HF_API_TOKEN", "").strip()
+            logger.warning(
+                "Ollama unavailable or model missing (%s).",
+                exc,
+            )
+            if hf_token:
+                logger.info("HF_API_TOKEN is set; falling back to HuggingFace backend.")
+                backend = "huggingface"
+            else:
+                # Hosted env might not have HF_TOKEN either; local users should pull model or switch dropdown.
+                raise
+
+    if backend == "huggingface":
         from langchain_community.llms import HuggingFaceEndpoint
 
         token = os.getenv("HF_API_TOKEN")
         if not token:
             raise EnvironmentError(
                 "HF_API_TOKEN is required for HuggingFace backend. "
-                "Get a free token at https://huggingface.co/settings/tokens"
+                "On hosted environments (no Ollama), set HF_API_TOKEN in secrets/env."
             )
         repo = os.getenv("HF_MODEL_REPO", "mistralai/Mistral-7B-Instruct-v0.3")
         logger.info("Using HuggingFace backend: %s", repo)
@@ -71,10 +123,10 @@ def get_llm():
             max_new_tokens=512,
         )
 
-    else:
-        raise ValueError(f"Unknown LLM_BACKEND: '{backend}'. Use 'ollama' or 'huggingface'.")
+    raise ValueError(f"Unknown LLM_BACKEND: '{backend}'. Use 'ollama' or 'huggingface'.")
 
 
+@lru_cache(maxsize=1)
 def get_embeddings():
     """
     Returns sentence-transformers embeddings — runs completely offline.
@@ -150,7 +202,8 @@ Summary (plain English, no jargon):"""
 
 def summarize_paper(llm, title: str, text: str) -> str:
     """Ask the LLM to summarize a paper in plain English."""
-    prompt = SUMMARY_PROMPT.format(title=title, text=text[:3000])
+    # Cap excerpt size to keep summarization fast during interactive runs.
+    prompt = SUMMARY_PROMPT.format(title=title, text=text[:2000])
     response = llm.invoke(prompt)
     # Ollama returns a string; HF may return an object
     return response if isinstance(response, str) else response.content
@@ -162,8 +215,9 @@ def summarize_paper(llm, title: str, text: str) -> str:
 def build_vector_store(papers: list[dict], embeddings) -> FAISS:
     """Chunk paper texts and build a FAISS vector index."""
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=600,
-        chunk_overlap=80,
+        # Fewer/smaller chunks => faster indexing + less LLM overhead later.
+        chunk_size=900,
+        chunk_overlap=120,
     )
     docs = []
     for paper in papers:
