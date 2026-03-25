@@ -18,7 +18,7 @@ import tempfile
 import urllib.request
 import urllib.error
 import logging
-from functools import lru_cache
+from typing import List
 
 import arxiv
 import fitz  # PyMuPDF
@@ -27,7 +27,6 @@ from dotenv import load_dotenv
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.chains.retrieval_qa.base import RetrievalQA
 from langchain_core.prompts import PromptTemplate
 
@@ -126,21 +125,67 @@ def get_llm():
     raise ValueError(f"Unknown LLM_BACKEND: '{backend}'. Use 'ollama' or 'huggingface'.")
 
 
-@lru_cache(maxsize=1)
 def get_embeddings():
     """
-    Returns sentence-transformers embeddings — runs completely offline.
-    Model is ~90 MB and downloads once on first run.
+    Returns embeddings used for FAISS retrieval.
+
+    Backends:
+      - `tfidf` (default): fast + lightweight (no torch/sentence-transformers)
+      - `sentence-transformers`: local/offline high quality embeddings (requires deps)
     """
-    model_name = os.getenv(
-        "EMBED_MODEL",
-        "sentence-transformers/all-MiniLM-L6-v2",  # fast & lightweight
-    )
-    logger.info("Loading embeddings model: %s", model_name)
-    return HuggingFaceEmbeddings(
-        model_name=model_name,
-        model_kwargs={"device": "cpu"},
-        encode_kwargs={"normalize_embeddings": True},
+    backend = os.getenv("EMBEDDINGS_BACKEND", "tfidf").strip().lower()
+
+    if backend in {"sentence-transformers", "st", "huggingface", "hf"}:
+        # Optional dependency path: only import if requested.
+        from langchain_community.embeddings import HuggingFaceEmbeddings
+
+        model_name = os.getenv(
+            "EMBED_MODEL",
+            "sentence-transformers/all-MiniLM-L6-v2",  # fast & lightweight
+        )
+        logger.info("Loading sentence-transformers embeddings model: %s", model_name)
+        return HuggingFaceEmbeddings(
+            model_name=model_name,
+            model_kwargs={"device": "cpu"},
+            encode_kwargs={"normalize_embeddings": True},
+        )
+
+    if backend in {"tfidf", "sklearn"}:
+        # Lightweight embeddings that work without torch.
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        import numpy as np
+
+        max_features = int(os.getenv("TFIDF_MAX_FEATURES", "50000"))
+
+        class TfidfEmbeddings:
+            def __init__(self, max_features_: int):
+                self.vectorizer = TfidfVectorizer(
+                    max_features=max_features_,
+                    stop_words="english",
+                    # l2-normalized vectors for cosine-ish similarity with L2 distance
+                    norm="l2",
+                )
+                self._fitted = False
+
+            def embed_documents(self, texts: List[str]) -> List[List[float]]:
+                mat = self.vectorizer.fit_transform(texts)
+                self._fitted = True
+                return mat.toarray().astype(np.float32).tolist()
+
+            def embed_query(self, text: str) -> List[float]:
+                if not self._fitted:
+                    # During interactive runs, indexing happens before query,
+                    # but we guard against bad call order.
+                    self.vectorizer.fit([text])
+                    self._fitted = True
+                mat = self.vectorizer.transform([text])
+                return mat.toarray().astype(np.float32).flatten().tolist()
+
+        logger.info("Using TF-IDF embeddings (sklearn).")
+        return TfidfEmbeddings(max_features)
+
+    raise ValueError(
+        "Unknown EMBEDDINGS_BACKEND. Use 'tfidf' or 'sentence-transformers'."
     )
 
 

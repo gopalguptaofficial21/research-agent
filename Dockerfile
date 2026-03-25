@@ -47,7 +47,8 @@ COPY src/ ./src/
 # Pre-download the embedding model so first run is instant
 # (model is cached in /app/.cache — volume-mount this for faster restarts)
 ENV HF_HOME=/app/.cache/huggingface
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
+# Optional: when using sentence-transformers embeddings locally, you can pre-download
+# models. Hosted deployments may not want torch/sentence-transformers at all.
 
 # Streamlit config
 ENV STREAMLIT_SERVER_PORT=8501
